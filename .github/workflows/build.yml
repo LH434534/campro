@@ -1,0 +1,111 @@
+name: build-apk
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: compilar APK
+        id: build
+        continue-on-error: true
+        run: |
+          set +e
+          {
+          echo "===== BUILD $(date -u +%FT%TZ) ====="
+          export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -1); BT="${BT%/}"
+          PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-2*/ 2>/dev/null | sort -V | tail -1); PLATFORM="${PLATFORM%/}"
+          ANDROID_JAR="$PLATFORM/android.jar"
+          echo "build-tools: $BT"
+          echo "platform:    $PLATFORM"
+          echo "android.jar: $([ -f "$ANDROID_JAR" ] && echo ok || echo AUSENTE)"
+          export PATH="$BT:$PATH"
+
+          rm -rf build && mkdir -p build/gen build/obj build/dex
+
+          echo "--- 1. aapt2 compile ---"
+          aapt2 compile --dir res -o build/res.zip 2>&1 | tail -6
+          echo "res.zip: $(stat -c%s build/res.zip 2>/dev/null)"
+
+          echo "--- 2. aapt2 link ---"
+          aapt2 link -o build/unsigned.apk -I "$ANDROID_JAR" \
+            --min-sdk-version 26 --target-sdk-version 34 \
+            --manifest AndroidManifest.xml \
+            --java build/gen --auto-add-overlay build/res.zip 2>&1 | tail -25
+          echo "unsigned: $(stat -c%s build/unsigned.apk 2>/dev/null)"
+
+          echo "--- 3. javac ---"
+          find build/gen src -name '*.java' > build/sources.txt
+          echo "fontes: $(wc -l < build/sources.txt)"
+          javac -source 8 -target 8 \
+            -bootclasspath "$ANDROID_JAR" -classpath "$ANDROID_JAR" \
+            -d build/obj @build/sources.txt 2>&1 | tail -40
+          echo "classes: $(find build/obj -name '*.class' | wc -l)"
+
+          echo "--- 4. d8 ---"
+          find build/obj -name '*.class' > build/classes.txt
+          echo "entradas: $(wc -l < build/classes.txt)"
+          d8 --lib "$ANDROID_JAR" --output build/dex @build/classes.txt 2>&1 | tail -20
+          ls -l build/dex/ 2>&1
+
+          echo "--- 5. dex no apk ---"
+          test -f build/dex/classes.dex || { echo "FALHA: classes.dex nao gerado"; exit 1; }
+          cp build/unsigned.apk build/stack.apk
+          (cd build/dex && zip -q -X ../../build/stack.apk classes.dex)
+          unzip -l build/stack.apk
+
+          echo "--- 6. zipalign ---"
+          zipalign -f -p 4 build/stack.apk build/campro.apk
+          echo "alinhado: $(stat -c%s build/campro.apk 2>/dev/null)"
+
+          echo "--- 7. assinar ---"
+          keytool -genkeypair -v -keystore build/campro.keystore -alias campro \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass campro123 -keypass campro123 \
+            -dname "CN=CamPro, OU=Dev, O=Thiairo, L=SP, C=BR" 2>&1 | tail -2
+          apksigner sign --ks build/campro.keystore --ks-key-alias campro \
+            --ks-pass pass:campro123 --key-pass pass:campro123 \
+            --out build/campro-signed.apk build/campro.apk 2>&1 | tail -5
+          echo "assinado: $(stat -c%s build/campro-signed.apk 2>/dev/null)"
+
+          echo "--- 8. verificar ---"
+          apksigner verify --print-certs build/campro-signed.apk 2>&1 | tail -6
+          echo "===== FIM ====="
+          } > build.log 2>&1
+          echo "exit=$?"
+
+      - name: subir artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: campro-apk
+          path: build/campro-signed.apk
+          if-no-files-found: ignore
+
+      - name: publicar
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p out
+          cp build.log out/build.log 2>/dev/null || echo "sem log" > out/build.log
+          if [ -f build/campro-signed.apk ]; then
+            base64 -w 120 build/campro-signed.apk > out/campro.apk.b64
+            cp build/campro-signed.apk out/campro.apk
+            echo "apk: $(stat -c%s out/campro.apk) bytes"
+          fi
+          ls -lh out/
+          git config user.name build-bot
+          git config user.email build@bot.local
+          git add -f out
+          git diff --cached --quiet || git commit -m "apk $(date -u +%FT%TZ)"
+          git push 2>&1 | tail -3 || echo "push sem efeito"
+
+      - name: mostrar log
+        if: always()
+        run: tail -45 out/build.log 2>/dev/null || true
