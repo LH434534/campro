@@ -20,7 +20,7 @@ jobs:
           echo "===== BUILD $(date -u +%FT%TZ) ====="
           export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -1); BT="${BT%/}"
-          PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-2*/ 2>/dev/null | sort -V | tail -1); PLATFORM="${PLATFORM%/}"
+          PLATFORM=$(ls -d "$ANDROID_HOME"/platforms/android-*/ 2>/dev/null | sort -V | tail -1); PLATFORM="${PLATFORM%/}"
           ANDROID_JAR="$PLATFORM/android.jar"
           echo "build-tools: $BT"
           echo "platform:    $PLATFORM"
