@@ -1,0 +1,39 @@
+===== BUILD 2026-10-06T22:42:23Z =====
+build-tools: /usr/local/lib/android/sdk/build-tools/37.0.0
+platform:    
+android.jar: AUSENTE
+--- 1. aapt2 compile ---
+res.zip: 2174
+--- 2. aapt2 link ---
+10-06 22:42:24.259  2175  2175 W ziparchive: Unable to open '/android.jar': No such file or directory
+error: failed to open APK: I/O error.
+unsigned: 
+--- 3. javac ---
+fontes: 3
+Fatal Error: Unable to find package java.lang in classpath or bootclasspath
+classes: 0
+--- 4. d8 ---
+entradas: 0
+	at com.android.tools.r8.q.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:164)
+	at com.android.tools.r8.D8Command.parse(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:1)
+	... 4 more
+	Suppressed: java.lang.RuntimeException: com.android.tools.r8.internal.j: java.nio.file.NoSuchFileException: /android.jar
+		at com.android.tools.r8.internal.fk3.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:27)
+		at com.android.tools.r8.BaseCommand$Builder.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:3)
+		at com.android.tools.r8.internal.vs0.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:28)
+		at com.android.tools.r8.BaseCommand$Builder.build(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:2)
+		... 4 more
+	Caused by: com.android.tools.r8.internal.j: java.nio.file.NoSuchFileException: /android.jar
+		at com.android.tools.r8.internal.fk3.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:21)
+		at com.android.tools.r8.internal.fk3.error(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:1)
+		at com.android.tools.r8.utils.i$a.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:156)
+		at com.android.tools.r8.utils.i$a.e(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:2)
+		at com.android.tools.r8.utils.i$a.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:101)
+		at com.android.tools.r8.n.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:19)
+		at com.android.tools.r8.q.a(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:164)
+		at com.android.tools.r8.D8Command.parse(R8_9.2.4-dev_ca5b565a5c7da61f18c57930a2823deaa7db40f41bc4509a15d64fc6a8b340be:1)
+		... 4 more
+	Caused by: [CIRCULAR REFERENCE: java.nio.file.NoSuchFileException: /android.jar]
+total 0
+--- 5. dex no apk ---
+FALHA: classes.dex nao gerado
