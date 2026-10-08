@@ -47,6 +47,12 @@ jobs:
             -bootclasspath "$ANDROID_JAR" -classpath "$ANDROID_JAR" \
             -d build/obj @build/sources.txt 2>&1 | tail -40
           echo "classes: $(find build/obj -name '*.class' | wc -l)"
+          grep -c "error:" build.log > /tmp/nerr.txt || true
+          echo "erros javac: $(cat /tmp/nerr.txt)"
+          if [ "$(cat /tmp/nerr.txt)" != "0" ]; then
+            echo "FALHA: javac reportou erros — abortando antes de empacotar"
+            exit 1
+          fi
 
           echo "--- 4. d8 ---"
           find build/obj -name '*.class' > build/classes.txt
@@ -56,6 +62,12 @@ jobs:
 
           echo "--- 5. dex no apk ---"
           test -f build/dex/classes.dex || { echo "FALHA: classes.dex nao gerado"; exit 1; }
+          TAM=$(stat -c%s build/dex/classes.dex)
+          echo "dex: $TAM bytes"
+          if [ "$TAM" -lt 12000 ]; then
+            echo "FALHA: dex suspeito de incompleto ($TAM bytes) — abortando"
+            exit 1
+          fi
           cp build/unsigned.apk build/stack.apk
           (cd build/dex && zip -q -X ../../build/stack.apk classes.dex)
           unzip -l build/stack.apk
