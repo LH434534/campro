@@ -490,7 +490,7 @@ public class MainActivity extends Activity {
                             sh[i] = (i == 0) ? new int[]{ 0, 0 } : Fusion.align(ref.y, f.y, w, h);
                         }
                         byte[] y = Fusion.fuseHdr(ys, w, h, evs, sh);
-                        byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h);
+                        byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h, ref.uRowStride, ref.uPixStride, ref.vRowStride, ref.vPixStride);
                         salvarNv21(nv, w, h);
                     }
                     public void onError(String msg) { fim("erro: " + msg); }
@@ -515,7 +515,7 @@ public class MainActivity extends Activity {
                     sh[i] = (i == 0) ? new int[]{ 0, 0 } : Fusion.align(ref.y, f.y, w, h);
                 }
                 byte[] y = Fusion.fuseNight(ys, w, h, sh);
-                byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h);
+                byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h, ref.uRowStride, ref.uPixStride, ref.vRowStride, ref.vPixStride);
                 salvarNv21(nv, w, h);
             }
             public void onError(String msg) { fim("erro: " + msg); }
