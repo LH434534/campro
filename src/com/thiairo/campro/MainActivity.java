@@ -2,21 +2,26 @@ package com.thiairo.campro;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.ContentValues;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ImageFormat;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.graphics.YuvImage;
-import android.media.MediaScannerConnection;
-import android.net.Uri;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.hardware.camera2.CameraCharacteristics;
+import android.media.Image;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.provider.MediaStore;
-import android.util.Log;
+import android.os.Handler;
 import android.util.Size;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -24,148 +29,612 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
-import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.SeekBar;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
-/**
- * Interface do CamPro.
- *
- * Restricao visual deliberada: fundo preto, linhas finas, um unico acento.
- * Controles manuais so aparecem no modo PRO. O resto do tempo a tela e
- * so a imagem.
- */
 public class MainActivity extends Activity {
 
-    private static final String TAG = "CamPro";
-    private static final int REQ_CAM = 10;
+    private static final int REQ_CAM = 11;
+    private static final String[] MODOS = { "AUTO", "PRO", "HDR", "NOITE", "RETRATO" };
 
-    private static final int MODO_FOTO = 0;
-    private static final int MODO_PRO = 1;
-    private static final int MODO_HDR = 2;
-    private static final int MODO_NOITE = 3;
-
-    // obturadores em nanossegundos
-    private static final long[] OBTURADORES = {
-            125000L, 250000L, 500000L, 1000000L, 2000000L, 4000000L,
-            8000000L, 16666666L, 33333333L, 66666666L, 125000000L,
-            250000000L, 500000000L, 1000000000L
-    };
-    private static final String[] OBT_TXT = {
-            "1/8000", "1/4000", "1/2000", "1/1000", "1/500", "1/250",
-            "1/125", "1/60", "1/30", "1/15", "1/8", "1/4", "1/2", "1s"
-    };
-    private static final int[] ISOS = {50, 100, 200, 400, 800, 1600, 3200, 6400};
-
+    private FrameLayout raiz;
+    private FrameLayout palco;          // viewfinder + overlays
     private TextureView preview;
-    private FrameLayout root;
+    private FocusRingView anel;
+    private ImageView graos;
     private Camera2Engine engine;
+    private Handler ui = new Handler();
 
-    private int modo = MODO_FOTO;
-    private boolean processando = false;
+    private int modo = 0;
+    private boolean ocupado = false;
+    private File ultimaFoto;
 
-    private LinearLayout painelManual;
-    private TextView txtIso, txtObt, txtFoco, txtEv, txtStatus;
-    private SeekBar sbIso, sbObt, sbFoco, sbEv;
-    private Histograma histograma;
-    private Grade grade;
+    private LinearLayout trilha;        // chips de modo
+    private LinearLayout painel;        // controles manuais
+    private TextView status;
+    private TextView dica;
+    private ImageView miniatura;
+    private View obturador;
 
-    private int isoIdx = 1;      // 100
-    private int obtIdx = 7;      // 1/60
-    private int focoPct = 0;     // 0 = automatico
-    private int evComp = 0;
+    private DialView dIso, dTempo, dFoco, dEv;
+    private int isoAtual = 100;
+    private long tempoAtual = 8000000L;
+    private float focoAtual = 1.0f;
+    private int evAtual = 0;
+    private boolean gradeLigada = true;
+    private boolean histogramaLigado = false;
 
-    private final Object uiLock = new Object();
-
-    /* ------------------------------------------------------------------ */
+    private static final Paint P_GRADE = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Design.CREME);
+        getWindow().getDecorView().setSystemUiVisibility(
+                getWindow().getDecorView().getSystemUiVisibility()
+                        | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
 
-        montarUi();
-        setContentView(root);
+        montarRaiz();
+        setContentView(raiz);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAM);
-                return;
-            }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(new String[]{
-                            Manifest.permission.CAMERA,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                    }, REQ_CAM);
-                    return;
-                }
-            }
+        if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{ Manifest.permission.CAMERA }, REQ_CAM);
         }
-        iniciarCamera();
     }
 
-    private void iniciarCamera() {
+    // ------------------------------------------------------------------ UI
+
+    private void montarRaiz() {
+        raiz = new FrameLayout(this);
+        raiz.setBackgroundColor(Design.CREME);
+
+        // ---- viewfinder ----
+        palco = new FrameLayout(this);
+        preview = new TextureView(this);
         preview.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
-            @Override
             public void onSurfaceTextureAvailable(SurfaceTexture st, int w, int h) {
                 abrirCamera(new Surface(st));
             }
-
-            @Override
             public void onSurfaceTextureSizeChanged(SurfaceTexture st, int w, int h) { }
-
-            @Override
-            public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
-                if (engine != null) engine.close();
-                return true;
-            }
-
-            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture st) { return true; }
             public void onSurfaceTextureUpdated(SurfaceTexture st) { }
         });
 
-        if (preview.isAvailable() && preview.getSurfaceTexture() != null) {
-            abrirCamera(new Surface(preview.getSurfaceTexture()));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        palco.addView(preview, lp);
+
+        View grad = new View(this) {
+            @Override
+            protected void onDraw(Canvas c) {
+                if (!gradeLigada) return;
+                P_GRADE.setColor(0x40FFFFFF);
+                P_GRADE.setStrokeWidth(Design.dp(0.8f));
+                float w = getWidth(), h = getHeight();
+                for (int i = 1; i < 3; i++) {
+                    c.drawLine(w * i / 3f, 0, w * i / 3f, h, P_GRADE);
+                    c.drawLine(0, h * i / 3f, w, h * i / 3f, P_GRADE);
+                }
+            }
+        };
+        grad.setWillNotDraw(false);
+        palco.addView(grad, lp);
+
+        anel = new FocusRingView(this);
+        palco.addView(anel, lp);
+
+        graos = new ImageView(this);
+        graos.setScaleType(ImageView.ScaleType.FIT_XY);
+        graos.setAlpha(0.35f);
+        palco.addView(graos, lp);
+
+        raiz.addView(palco, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // ---- topo ----
+        raiz.addView(topo(), topoLayout());
+        // ---- base (inclui o painel manual) ----
+        raiz.addView(base(), baseLayout());
+
+        status = new TextView(this);
+        status.setTextColor(Design.CAFE);
+        status.setTextSize(12);
+        status.setGravity(Gravity.CENTER);
+        status.setAlpha(0f);
+        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sp.gravity = Gravity.CENTER;
+        raiz.addView(status, sp);
+
+        obturador = new View(this);
+        obturador.setBackgroundColor(Design.CREME);
+        obturador.setAlpha(0f);
+        obturador.setClickable(false);
+        raiz.addView(obturador, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+    }
+
+    private View topo() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(0, (int) Design.dp(30), 0, 0);
+
+        TextView marca = new TextView(this);
+        marca.setText("CamPro");
+        marca.setTextColor(Design.ESPRESSO);
+        marca.setTextSize(26);
+        marca.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.SERIF, android.graphics.Typeface.BOLD));
+        marca.setLetterSpacing(0.02f);
+        marca.setGravity(Gravity.CENTER);
+        col.addView(marca);
+
+        TextView sub = new TextView(this);
+        sub.setText("fotografia manual");
+        sub.setTextColor(Design.CINZA);
+        sub.setTextSize(10);
+        sub.setLetterSpacing(0.22f);
+        sub.setGravity(Gravity.CENTER);
+        sub.setPadding(0, (int) Design.dp(1), 0, 0);
+        col.addView(sub);
+
+        return col;
+    }
+
+    private FrameLayout.LayoutParams topoLayout() {
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.gravity = Gravity.TOP;
+        return p;
+    }
+
+    private View base() {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER_HORIZONTAL);
+        col.setPadding((int) Design.dp(24), 0, (int) Design.dp(24), (int) Design.dp(26));
+
+        construirPainel();
+        col.addView(painel);
+
+        trilha = new LinearLayout(this);
+        trilha.setOrientation(LinearLayout.HORIZONTAL);
+        trilha.setGravity(Gravity.CENTER);
+        for (int i = 0; i < MODOS.length; i++) {
+            trilha.addView(chip(MODOS[i], i));
+        }
+        col.addView(trilha, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout lin = new LinearLayout(this);
+        lin.setOrientation(LinearLayout.HORIZONTAL);
+        lin.setGravity(Gravity.CENTER_VERTICAL);
+        lin.setPadding(0, (int) Design.dp(22), 0, 0);
+
+        miniatura = new ImageView(this);
+        miniatura.setBackgroundColor(Design.AREIA);
+        int t = (int) Design.dp(46);
+        LinearLayout.LayoutParams mp = new LinearLayout.LayoutParams(t, t);
+        mp.rightMargin = (int) Design.dp(28);
+        miniatura.setLayoutParams(mp);
+        miniatura.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { abrirUltima(); }
+        });
+        lin.addView(miniatura);
+
+        lin.addView(botaoCapturar());
+
+        View vazio = new View(this);
+        LinearLayout.LayoutParams vp = new LinearLayout.LayoutParams(t, t);
+        vp.leftMargin = (int) Design.dp(28);
+        vazio.setLayoutParams(vp);
+        lin.addView(vazio);
+
+        col.addView(lin);
+
+        dica = new TextView(this);
+        dica.setText("toque para focar");
+        dica.setTextColor(Design.CINZA_CLARO);
+        dica.setTextSize(10.5f);
+        dica.setLetterSpacing(0.14f);
+        dica.setGravity(Gravity.CENTER);
+        dica.setPadding(0, (int) Design.dp(14), 0, 0);
+        col.addView(dica);
+
+        return col;
+    }
+
+    private FrameLayout.LayoutParams baseLayout() {
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.gravity = Gravity.BOTTOM;
+        return p;
+    }
+
+    private View botaoCapturar() {
+        final FrameLayout f = new FrameLayout(this);
+        int d = (int) Design.dp(78);
+        f.setLayoutParams(new LinearLayout.LayoutParams(d, d));
+
+        final View anelExt = new View(this) {
+            @Override
+            protected void onDraw(Canvas c) {
+                Paint p = Design.traco(Design.LINHA, 2f);
+                float r = getWidth() / 2f - Design.dp(4);
+                c.drawCircle(getWidth() / 2f, getHeight() / 2f, r, p);
+            }
+        };
+        anelExt.setWillNotDraw(false);
+        f.addView(anelExt, new FrameLayout.LayoutParams(d, d));
+
+        final View nucleo = new View(this) {
+            @Override
+            protected void onDraw(Canvas c) {
+                Paint p = Design.pincel(Design.TERRACOTA);
+                float r = getWidth() / 2f - Design.dp(9);
+                c.drawCircle(getWidth() / 2f, getHeight() / 2f, r, p);
+            }
+        };
+        nucleo.setWillNotDraw(false);
+        int nd = (int) (d - Design.dp(22));
+        FrameLayout.LayoutParams np = new FrameLayout.LayoutParams(nd, nd);
+        np.gravity = Gravity.CENTER;
+        f.addView(nucleo, np);
+
+        f.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { disparar(); }
+        });
+        return f;
+    }
+
+    private View chip(String txt, final int idx) {
+        final TextView t = new TextView(this);
+        t.setText(txt);
+        t.setTextSize(10.5f);
+        t.setLetterSpacing(0.16f);
+        t.setGravity(Gravity.CENTER);
+        int pd = (int) Design.dp(11);
+        t.setPadding((int) Design.dp(15), pd, (int) Design.dp(15), pd);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        p.rightMargin = (int) Design.dp(7);
+        t.setLayoutParams(p);
+        t.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { setModo(idx); }
+        });
+        pintarChip(t, idx == 0);
+        return t;
+    }
+
+    private void pintarChip(TextView t, boolean ativo) {
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setCornerRadius(Design.dp(20));
+        if (ativo) {
+            g.setColor(Design.ESPRESSO);
+            t.setTextColor(Design.CREME);
+        } else {
+            g.setColor(Design.CREME_2);
+            g.setStroke((int) Design.dp(1), Design.LINHA);
+            t.setTextColor(Design.CAFE);
+        }
+        t.setBackground(g);
+    }
+
+    private void construirPainel() {
+        painel = new LinearLayout(this);
+        painel.setOrientation(LinearLayout.VERTICAL);
+        painel.setBackgroundColor(Design.CREME_2);
+        painel.setPadding((int) Design.dp(20), (int) Design.dp(16),
+                (int) Design.dp(20), (int) Design.dp(18));
+
+        TextView rot = new TextView(this);
+        rot.setText("CONTROLE MANUAL");
+        rot.setTextColor(Design.CINZA);
+        rot.setTextSize(9.5f);
+        rot.setLetterSpacing(0.2f);
+        rot.setPadding(0, 0, 0, (int) Design.dp(12));
+        painel.addView(rot);
+
+        dIso = novoDial("ISO", 50, 6400, 100, "100");
+        dTempo = novoDial("OBTURADOR", -13, 0, -7, "1/125");
+        dFoco = novoDial("FOCO", 0, 20, 1, "auto");
+        dEv = novoDial("EXPOSIÇÃO", -12, 12, 0, "0.0");
+        painel.setVisibility(View.GONE);
+        painel.addView(dIso);
+        painel.addView(dTempo);
+        painel.addView(dFoco);
+        painel.addView(dEv);
+    }
+
+    private DialView novoDial(String rot, float mn, float mx, float ini, String txt) {
+        DialView d = new DialView(this);
+        d.configurar(rot, mn, mx, ini, txt);
+        int h = (int) Design.dp(52);
+        d.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, h));
+        d.aoMudar(new DialView.Mudanca() {
+            public void aoMudar(float v) { atualizarManual(); }
+        });
+        return d;
+    }
+
+    // -------------------------------------------------------------- câmera
+
+    private void abrirCamera(Surface s) {
+        try {
+            engine = new Camera2Engine(this);
+            engine.start(s);
+            gerarGrao();
+            if (engine.supportsManual()) {
+                dica.setText("controle manual disponível");
+            } else {
+                dica.setText("este aparelho limita controles manuais");
+            }
+        } catch (Exception e) {
+            dica.setText("câmera indisponível: " + e.getMessage());
         }
     }
 
-    private void abrirCamera(Surface s) {
-        if (engine != null) return;
-        engine = new Camera2Engine(this);
-        try {
-            engine.start(s);
-            atualizarManual();
-            txtStatus.setText(engine.supportsManual() ? "manual disponivel" : "manual limitado");
-        } catch (Exception e) {
-            Log.e(TAG, "abrir: " + e.getMessage());
-            txtStatus.setText("falhou: " + e.getMessage());
-            Toast.makeText(this, "Camera indisponivel: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
+    private void gerarGrao() {
+        int w = 360, h = 640;
+        Bitmap b = Design.grao(w, h, 26);
+        graos.setImageBitmap(b);
     }
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] grants) {
-        if (code == REQ_CAM) {
-            boolean ok = grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED;
-            if (ok) iniciarCamera();
-            else Toast.makeText(this, "Sem permissao de camera", Toast.LENGTH_SHORT).show();
+        if (code == REQ_CAM && grants.length > 0
+                && grants[0] == PackageManager.PERMISSION_GRANTED) {
+            if (preview.isAvailable()) {
+                abrirCamera(new Surface(preview.getSurfaceTexture()));
+            }
+        } else {
+            dica.setText("permissão de câmera necessária");
+        }
+    }
+
+    private void setModo(int m) {
+        modo = m;
+        for (int i = 0; i < trilha.getChildCount(); i++) {
+            View v = trilha.getChildAt(i);
+            if (v instanceof TextView) pintarChip((TextView) v, i == m);
+        }
+        boolean pro = (m == 1);
+        painel.setVisibility(pro ? View.VISIBLE : View.GONE);
+        if (pro) atualizarManual();
+        else if (engine != null) {
+            engine.setManual(-1, -1, -1);
+        }
+        mostrarStatus(MODOS[m]);
+    }
+
+    private void atualizarManual() {
+        if (engine == null) return;
+        isoAtual = (int) dIso.getValor();
+        double exp = dTempo.getValor();
+        long nanos = (long) (Math.pow(2, exp) * 1000000000.0);
+        tempoAtual = nanos;
+        focoAtual = dFoco.getValor();
+        evAtual = (int) dEv.getValor();
+
+        dIso.setValor(isoAtual, String.valueOf(isoAtual));
+        dTempo.setValor(dTempo.getValor(), rotuloTempo(nanos));
+        dFoco.setValor(focoAtual, focoAtual <= 0.05f ? "auto" : String.format(Locale.US, "%.2f m", focoAtual));
+        dEv.setValor(evAtual, String.format(Locale.US, "%+.1f", evAtual / 3f));
+
+        engine.setManual(isoAtual, tempoAtual, focoAtual);
+        engine.setEvComp(evAtual);
+    }
+
+    private String rotuloTempo(long nanos) {
+        double s = nanos / 1000000000.0;
+        if (s >= 1.0) return String.format(Locale.US, "%.1fs", s);
+        return "1/" + Math.round(1.0 / s);
+    }
+
+    private void disparar() {
+        if (ocupado || engine == null) return;
+        ocupado = true;
+        obturador.animate().alpha(0.85f).setDuration(70)
+                .withEndAction(new Runnable() {
+                    public void run() {
+                        obturador.animate().alpha(0f).setDuration(180).start();
+                    }
+                }).start();
+
+        if (modo == 2) capturarHdr();
+        else if (modo == 3) capturarNoite();
+        else capturarSimples();
+    }
+
+    private void capturarSimples() {
+        mostrarStatus("capturando");
+        engine.captureJpeg(new Camera2Engine.JpegListener() {
+            public void onJpeg(byte[] data) { salvar(data); }
+            public void onError(String msg) { fim("erro: " + msg); }
+        });
+    }
+
+    private void capturarHdr() {
+        mostrarStatus("3 exposições · alinhando");
+        Size s = engine.getCaptureSize();
+        engine.captureBurst(new float[]{ -2f, 0f, 2f }, s,
+                new Camera2Engine.BurstListener() {
+                    public void onBurst(List<Camera2Engine.Frame> frames) {
+                        if (frames.size() < 2) { capturarSimples(); return; }
+                        Camera2Engine.Frame ref = frames.get(0);
+                        int w = ref.width, h = ref.height;
+                        byte[][] ys = new byte[frames.size()][];
+                        int[][] sh = new int[frames.size()][];
+                        float[] evs = new float[frames.size()];
+                        for (int i = 0; i < frames.size(); i++) {
+                            Camera2Engine.Frame f = frames.get(i);
+                            ys[i] = f.y;
+                            evs[i] = f.ev;
+                            sh[i] = (i == 0) ? new int[]{ 0, 0 } : Fusion.align(ref.y, f.y, w, h);
+                        }
+                        byte[] y = Fusion.fuseHdr(ys, w, h, evs, sh);
+                        byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h);
+                        salvarNv21(nv, w, h);
+                    }
+                    public void onError(String msg) { fim("erro: " + msg); }
+                });
+    }
+
+    private void capturarNoite() {
+        mostrarStatus("empilhando 6 quadros");
+        Size s = engine.getCaptureSize();
+        float[] evs = new float[6];
+        for (int i = 0; i < 6; i++) evs[i] = 0f;
+        engine.captureBurst(evs, s, new Camera2Engine.BurstListener() {
+            public void onBurst(List<Camera2Engine.Frame> frames) {
+                if (frames.size() < 2) { capturarSimples(); return; }
+                Camera2Engine.Frame ref = frames.get(0);
+                int w = ref.width, h = ref.height;
+                byte[][] ys = new byte[frames.size()][];
+                int[][] sh = new int[frames.size()][];
+                for (int i = 0; i < frames.size(); i++) {
+                    Camera2Engine.Frame f = frames.get(i);
+                    ys[i] = f.y;
+                    sh[i] = (i == 0) ? new int[]{ 0, 0 } : Fusion.align(ref.y, f.y, w, h);
+                }
+                byte[] y = Fusion.fuseNight(ys, w, h, sh);
+                byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h);
+                salvarNv21(nv, w, h);
+            }
+            public void onError(String msg) { fim("erro: " + msg); }
+        });
+    }
+
+    // ------------------------------------------------------------- arquivos
+
+    private File dirFotos() {
+        File d = new File(Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_PICTURES), "CamPro");
+        if (!d.exists()) d.mkdirs();
+        return d;
+    }
+
+    private void salvar(byte[] jpeg) {
+        FileOutputStream fos = null;
+        try {
+            String nome = "CMP_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+                    .format(new Date()) + ".jpg";
+            File f = new File(dirFotos(), nome);
+            fos = new FileOutputStream(f);
+            fos.write(jpeg);
+            ultimaFoto = f;
+            publicar(f);
+            fim("salvo");
+        } catch (Exception e) {
+            fim("erro ao salvar: " + e.getMessage());
+        } finally {
+            if (fos != null) { try { fos.close(); } catch (Exception ig) { } }
+        }
+    }
+
+    private void salvarNv21(byte[] nv21, int w, int h) {
+        try {
+            YuvImage img = new YuvImage(nv21, ImageFormat.NV21, w, h, null);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            img.compressToJpeg(new Rect(0, 0, w, h), 94, baos);
+            salvar(baos.toByteArray());
+        } catch (Exception e) {
+            fim("erro na fusão: " + e.getMessage());
+        }
+    }
+
+    private void publicar(File f) {
+        Bitmap b = BitmapFactory.decodeFile(f.getAbsolutePath());
+        if (b == null) return;
+        int lado = Math.min(b.getWidth(), b.getHeight());
+        Bitmap quad = Bitmap.createBitmap(b, (b.getWidth() - lado) / 2,
+                (b.getHeight() - lado) / 2, lado, lado);
+        miniatura.setImageBitmap(quad);
+        android.graphics.drawable.GradientDrawable g =
+                new android.graphics.drawable.GradientDrawable();
+        g.setCornerRadius(Design.dp(12));
+        miniatura.setBackground(g);
+        miniatura.setClipToOutline(true);
+    }
+
+    private void abrirUltima() {
+        if (ultimaFoto == null) { mostrarStatus("nenhuma foto ainda"); return; }
+        mostrarStatus(ultimaFoto.getName());
+    }
+
+    // ---------------------------------------------------------------- estado
+
+    private void mostrarStatus(String txt) {
+        status.setText(txt);
+        status.animate().alpha(1f).setDuration(140).start();
+        ui.removeCallbacks(esconder);
+        ui.postDelayed(esconder, 1600);
+    }
+
+    private final Runnable esconder = new Runnable() {
+        public void run() { status.animate().alpha(0f).setDuration(300).start(); }
+    };
+
+    private void fim(String msg) {
+        runOnUiThread(new Runnable() {
+            public void run() {
+                ocupado = false;
+                mostrarStatus(msg);
+            }
+        });
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent e) {
+        if (e.getAction() == MotionEvent.ACTION_UP && engine != null) {
+            float x = e.getX(), y = e.getY();
+            if (y < Design.dp(120) || y > getResources().getDisplayMetrics().heightPixels - Design.dp(240)) {
+                return true;
+            }
+            anel.toque(x, y);
+            Rect sensor = engine.getSensorRect();
+            if (sensor != null && sensor.width() > 0) {
+                float fx = x / palco.getWidth();
+                float fy = y / palco.getHeight();
+                int cx = sensor.left + (int) (sensor.width() * fx);
+                int cy = sensor.top + (int) (sensor.height() * fy);
+                int m = (int) Design.dp(90);
+                Rect r = new Rect(
+                        Math.max(sensor.left, cx - m),
+                        Math.max(sensor.top, cy - m),
+                        Math.min(sensor.right, cx + m),
+                        Math.min(sensor.bottom, cy + m));
+                engine.setMeteringRegion(r);
+            }
+            ui.postDelayed(new Runnable() {
+                public void run() { anel.sumir(); }
+            }, 1800);
+        }
+        return true;
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (preview != null && preview.isAvailable() && engine == null) {
+            abrirCamera(new Surface(preview.getSurfaceTexture()));
         }
     }
 
@@ -173,534 +642,5 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         if (engine != null) { engine.close(); engine = null; }
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        if (engine == null && preview.isAvailable() && preview.getSurfaceTexture() != null) {
-            abrirCamera(new Surface(preview.getSurfaceTexture()));
-        }
-    }
-
-    /* ------------------------------------------------------------------ *
-     * Interface
-     * ------------------------------------------------------------------ */
-
-    private void montarUi() {
-        root = new FrameLayout(this);
-        root.setBackgroundColor(Color.BLACK);
-
-        preview = new TextureView(this);
-        root.addView(preview, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        grade = new Grade(this);
-        root.addView(grade, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        histograma = new Histograma(this);
-        FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(260, 110);
-        hp.gravity = Gravity.TOP | Gravity.END;
-        hp.setMargins(0, dp(64), dp(12), 0);
-        root.addView(histograma, hp);
-
-        // toque para focar
-        final Reticulo reticulo = new Reticulo(this);
-        root.addView(reticulo, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-
-        preview.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent e) {
-                if (e.getAction() != MotionEvent.ACTION_UP) return true;
-                if (engine == null) return true;
-
-                Rect ativo = engine.getSensorRect();
-                if (ativo == null) return true;
-
-                float x = e.getX() / v.getWidth();
-                float y = e.getY() / v.getHeight();
-                int cx = (int) (ativo.left + x * ativo.width());
-                int cy = (int) (ativo.top + y * ativo.height());
-                int lado = Math.max(ativo.width(), ativo.height()) / 8;
-
-                Rect r = new Rect(cx - lado, cy - lado, cx + lado, cy + lado);
-                r.left = Math.max(r.left, ativo.left);
-                r.top = Math.max(r.top, ativo.top);
-                r.right = Math.min(r.right, ativo.right);
-                r.bottom = Math.min(r.bottom, ativo.bottom);
-
-                engine.setMeteringRegion(r);
-                reticulo.mostrar(e.getX(), e.getY());
-                return true;
-            }
-        });
-
-        // ---- barra de modos, no topo ----
-        LinearLayout modos = new LinearLayout(this);
-        modos.setOrientation(LinearLayout.HORIZONTAL);
-        modos.setBackgroundColor(Color.TRANSPARENT);
-        FrameLayout.LayoutParams mp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        mp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        mp.setMargins(0, dp(20), 0, 0);
-        root.addView(modos, mp);
-
-        final String[] nomes = {"FOTO", "PRO", "HDR", "NOITE"};
-        final TextView[] botoes = new TextView[nomes.length];
-        for (int i = 0; i < nomes.length; i++) {
-            final int idx = i;
-            TextView t = new TextView(this);
-            t.setText(nomes[i]);
-            t.setTextSize(12);
-            t.setTextColor(Color.WHITE);
-            t.setPadding(dp(14), dp(6), dp(14), dp(6));
-            t.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) { setModo(idx); }
-            });
-            botoes[i] = t;
-            modos.addView(t);
-        }
-        this.botoesModo = botoes;
-
-        // ---- area inferior ----
-        LinearLayout baixo = new LinearLayout(this);
-        baixo.setOrientation(LinearLayout.VERTICAL);
-        baixo.setBackgroundColor(0xBB000000);
-        baixo.setPadding(dp(12), dp(10), dp(12), dp(16));
-        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        bp.gravity = Gravity.BOTTOM;
-        root.addView(baixo, bp);
-
-        painelManual = new LinearLayout(this);
-        painelManual.setOrientation(LinearLayout.VERTICAL);
-        baixo.addView(painelManual);
-
-        txtIso = rotulo("ISO");
-        sbIso = busca(100, new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar s, int p, boolean u) { atualizarManual(); }
-            public void onStartTrackingTouch(SeekBar s) { }
-            public void onStopTrackingTouch(SeekBar s) { }
-        });
-        painelManual.addView(linha(txtIso, sbIso));
-
-        txtObt = rotulo("OBT");
-        sbObt = busca(100, new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar s, int p, boolean u) { atualizarManual(); }
-            public void onStartTrackingTouch(SeekBar s) { }
-            public void onStopTrackingTouch(SeekBar s) { }
-        });
-        painelManual.addView(linha(txtObt, sbObt));
-
-        txtFoco = rotulo("FOC");
-        sbFoco = busca(100, new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar s, int p, boolean u) { atualizarManual(); }
-            public void onStartTrackingTouch(SeekBar s) { }
-            public void onStopTrackingTouch(SeekBar s) { }
-        });
-        painelManual.addView(linha(txtFoco, sbFoco));
-
-        txtEv = rotulo("EV");
-        sbEv = busca(100, new SeekBar.OnSeekBarChangeListener() {
-            public void onProgressChanged(SeekBar s, int p, boolean u) { atualizarManual(); }
-            public void onStartTrackingTouch(SeekBar s) { }
-            public void onStopTrackingTouch(SeekBar s) { }
-        });
-        painelManual.addView(linha(txtEv, sbEv));
-
-        // ---- obturador ----
-        LinearLayout disparo = new LinearLayout(this);
-        disparo.setOrientation(LinearLayout.HORIZONTAL);
-        disparo.setGravity(Gravity.CENTER_VERTICAL);
-        baixo.addView(disparo);
-
-        txtStatus = new TextView(this);
-        txtStatus.setTextSize(11);
-        txtStatus.setTextColor(0xFF9AA0A6);
-        txtStatus.setLayoutParams(new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        disparo.addView(txtStatus);
-
-        final TextView btn = new TextView(this);
-        btn.setText("●");
-        btn.setTextSize(40);
-        btn.setTextColor(0xFFFFD60A);
-        btn.setGravity(Gravity.CENTER);
-        btn.setPadding(dp(20), 0, dp(20), 0);
-        btn.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) { disparar(); }
-        });
-        disparo.addView(btn);
-
-        TextView vazio = new TextView(this);
-        vazio.setLayoutParams(new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        disparo.addView(vazio);
-
-        setModo(MODO_FOTO);
-    }
-
-    private TextView[] botoesModo;
-
-    private TextView rotulo(String t) {
-        TextView v = new TextView(this);
-        v.setText(t);
-        v.setTextSize(11);
-        v.setTextColor(0xFF9AA0A6);
-        v.setWidth(dp(34));
-        return v;
-    }
-
-    private SeekBar busca(int max, SeekBar.OnSeekBarChangeListener l) {
-        SeekBar s = new SeekBar(this);
-        s.setMax(max);
-        s.setOnSeekBarChangeListener(l);
-        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        s.setLayoutParams(p);
-        return s;
-    }
-
-    private LinearLayout linha(View a, View b) {
-        LinearLayout l = new LinearLayout(this);
-        l.setOrientation(LinearLayout.HORIZONTAL);
-        l.setGravity(Gravity.CENTER_VERTICAL);
-        l.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        l.addView(a);
-        l.addView(b);
-        return l;
-    }
-
-    private int dp(int v) {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
-    }
-
-    private void setModo(int m) {
-        modo = m;
-        for (int i = 0; i < botoesModo.length; i++) {
-            boolean on = (i == m);
-            botoesModo[i].setTextColor(on ? 0xFFFFD60A : 0xFF9AA0A6);
-            botoesModo[i].setTextSize(on ? 13 : 12);
-        }
-        painelManual.setVisibility(m == MODO_PRO ? View.VISIBLE : View.GONE);
-        grade.setVisivel(m == MODO_PRO);
-        if (m != MODO_PRO && engine != null) {
-            // fora do PRO, devolve tudo ao automatico
-            engine.setManual(0, 0, -1f);
-        }
-    }
-
-    private void atualizarManual() {
-        if (engine == null) return;
-        int nIso = ISOS.length - 1;
-        int nObt = OBTURADORES.length - 1;
-
-        isoIdx = Math.round((float) sbIso.getProgress() / 100f * nIso);
-        obtIdx = Math.round((float) sbObt.getProgress() / 100f * nObt);
-        focoPct = sbFoco.getProgress();
-        evComp = Math.round((sbEv.getProgress() - 50) / 50f * engine.evRange()[1]);
-
-        int iso = ISOS[isoIdx];
-        long exp = OBTURADORES[obtIdx];
-        float foco = (focoPct == 0) ? -1f : (focoPct / 100f) * engine.maxFocus();
-
-        txtIso.setText(engine.supportsManual() ? ("ISO " + iso) : "ISO auto");
-        txtObt.setText(engine.supportsManual() ? OBT_TXT[obtIdx] : "auto");
-        txtFoco.setText(foco < 0f ? "AF" : ("F " + (int) (foco * 100) + "cm"));
-        txtEv.setText((evComp > 0 ? "+" : "") + evComp);
-
-        if (engine.supportsManual()) {
-            engine.setManual(iso, exp, foco);
-        } else {
-            engine.setManual(0, 0, foco);
-            engine.setEvComp(evComp);
-        }
-    }
-
-    /* ------------------------------------------------------------------ *
-     * Captura
-     * ------------------------------------------------------------------ */
-
-    private void disparar() {
-        if (engine == null) { aviso("camera nao pronta"); return; }
-        synchronized (uiLock) {
-            if (processando) { aviso("ainda processando"); return; }
-            processando = true;
-        }
-        txtStatus.setText("capturando…");
-
-        if (modo == MODO_HDR) {
-            capturarHdr();
-        } else if (modo == MODO_NOITE) {
-            capturarNoite();
-        } else {
-            capturarSimples();
-        }
-    }
-
-    private void capturarSimples() {
-        engine.captureJpeg(new Camera2Engine.JpegListener() {
-            @Override
-            public void onJpeg(byte[] data) {
-                salvar(data);
-                fim("salvo");
-            }
-
-            @Override
-            public void onError(String msg) { fim("erro: " + msg); }
-        });
-    }
-
-    private void capturarHdr() {
-        final float[] evs = {-2.0f, 0.0f, 2.0f};
-        engine.captureBurst(evs, engine.getCaptureSize(),
-                new Camera2Engine.BurstListener() {
-                    @Override
-                    public void onBurst(List<Camera2Engine.Frame> frames) {
-                        if (frames.size() < 2) { fim("poucos quadros"); return; }
-                        processar(frames, evs, true);
-                    }
-
-                    @Override
-                    public void onError(String msg) { fim("erro: " + msg); }
-                });
-    }
-
-    private void capturarNoite() {
-        final int n = 6;
-        float[] evs = new float[n];
-        for (int i = 0; i < n; i++) evs[i] = 0f;
-        engine.captureBurst(evs, engine.getCaptureSize(),
-                new Camera2Engine.BurstListener() {
-                    @Override
-                    public void onBurst(List<Camera2Engine.Frame> frames) {
-                        if (frames.size() < 2) { fim("poucos quadros"); return; }
-                        processar(frames, new float[frames.size()], false);
-                    }
-
-                    @Override
-                    public void onError(String msg) { fim("erro: " + msg); }
-                });
-    }
-
-    /** Roda a fusao fora da thread de UI: sao milhoes de pixels. */
-    private void processar(final List<Camera2Engine.Frame> frames,
-                           final float[] evs, final boolean hdr) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    final int n = frames.size();
-                    Camera2Engine.Frame ref = frames.get(n / 2);
-                    final int w = ref.width, h = ref.height;
-
-                    byte[][] ys = new byte[n][];
-                    for (int i = 0; i < n; i++) ys[i] = frames.get(i).y;
-
-                    // alinha os quadros contra o do meio
-                    int[][] shift = new int[n][];
-                    for (int i = 0; i < n; i++) {
-                        if (i == n / 2) shift[i] = new int[]{0, 0};
-                        else shift[i] = Fusion.align(ref.y, ys[i], w, h);
-                    }
-
-                    byte[] saida;
-                    if (hdr) {
-                        float[] e = new float[n];
-                        for (int i = 0; i < n; i++) e[i] = (i < evs.length) ? evs[i] : 0f;
-                        saida = Fusion.fuseHdr(ys, w, h, e, shift);
-                    } else {
-                        saida = Fusion.fuseNight(ys, w, h, shift);
-                    }
-
-                    byte[] nv21 = Fusion.toNv21(saida, ref.u, ref.v, w, h,
-                            ref.uRowStride, ref.uPixStride,
-                            ref.vRowStride, ref.vPixStride);
-
-                    YuvImage img = new YuvImage(nv21, android.graphics.ImageFormat.NV21,
-                            w, h, null);
-                    java.io.ByteArrayOutputStream bos =
-                            new java.io.ByteArrayOutputStream();
-                    img.compressToJpeg(new Rect(0, 0, w, h), 95, bos);
-                    final byte[] jpeg = bos.toByteArray();
-
-                    final int[] hist = Fusion.histogram(saida, w, h);
-
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            histograma.set(hist);
-                            salvar(jpeg);
-                            fim("fusao de " + n + " quadros — salvo");
-                        }
-                    });
-                } catch (Throwable t) {
-                    Log.e(TAG, "processar: " + t.getMessage());
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() { fim("falhou na fusao"); }
-                    });
-                }
-            }
-        }).start();
-    }
-
-    private void fim(final String msg) {
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                txtStatus.setText(msg);
-                synchronized (uiLock) { processando = false; }
-            }
-        });
-    }
-
-    private void aviso(String s) {
-        Toast.makeText(this, s, Toast.LENGTH_SHORT).show();
-    }
-
-    /* ------------------------------------------------------------------ *
-     * Gravacao
-     * ------------------------------------------------------------------ */
-
-    private void salvar(byte[] jpeg) {
-        String nome = "CAMPRO_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-                .format(new Date()) + ".jpg";
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ContentValues cv = new ContentValues();
-                cv.put(MediaStore.Images.Media.DISPLAY_NAME, nome);
-                cv.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-                cv.put(MediaStore.Images.Media.RELATIVE_PATH, "DCIM/CamPro");
-                cv.put(MediaStore.Images.Media.IS_PENDING, 1);
-
-                Uri uri = getContentResolver().insert(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv);
-                if (uri == null) throw new java.io.IOException("insert falhou");
-
-                OutputStream os = getContentResolver().openOutputStream(uri);
-                os.write(jpeg);
-                os.close();
-
-                cv.clear();
-                cv.put(MediaStore.Images.Media.IS_PENDING, 0);
-                getContentResolver().update(uri, cv, null, null);
-            } else {
-                File dir = new File(
-                        Environment.getExternalStoragePublicDirectory(
-                                Environment.DIRECTORY_DCIM), "CamPro");
-                if (!dir.exists()) dir.mkdirs();
-                File f = new File(dir, nome);
-                FileOutputStream fos = new FileOutputStream(f);
-                fos.write(jpeg);
-                fos.close();
-                MediaScannerConnection.scanFile(this,
-                        new String[]{f.getAbsolutePath()},
-                        new String[]{"image/jpeg"}, null);
-            }
-            Log.i(TAG, "salvo " + nome + " (" + jpeg.length + " bytes)");
-        } catch (Exception e) {
-            Log.e(TAG, "salvar: " + e.getMessage());
-            aviso("falhou ao salvar");
-        }
-    }
-
-    /* ------------------------------------------------------------------ *
-     * Overlays
-     * ------------------------------------------------------------------ */
-
-    private final class Grade extends View {
-        private boolean visivel = false;
-        private final Paint p = new Paint();
-
-        Grade(android.content.Context c) {
-            super(c);
-            p.setColor(0x55FFFFFF);
-            p.setStrokeWidth(1f);
-        }
-
-        void setVisivel(boolean v) { visivel = v; invalidate(); }
-
-        @Override
-        protected void onDraw(Canvas cv) {
-            super.onDraw(cv);
-            if (!visivel) return;
-            int w = getWidth(), h = getHeight();
-            for (int i = 1; i < 3; i++) {
-                cv.drawLine(w * i / 3f, 0, w * i / 3f, h, p);
-                cv.drawLine(0, h * i / 3f, w, h * i / 3f, p);
-            }
-        }
-    }
-
-    private final class Histograma extends View {
-        private int[] hist = null;
-        private final Paint p = new Paint();
-
-        Histograma(android.content.Context c) {
-            super(c);
-            p.setColor(0xCCFFFFFF);
-        }
-
-        void set(int[] h) { hist = h; invalidate(); }
-
-        @Override
-        protected void onDraw(Canvas cv) {
-            super.onDraw(cv);
-            if (hist == null) return;
-            int w = getWidth(), h = getHeight();
-            int max = 1;
-            for (int v : hist) if (v > max) max = v;
-            float bw = w / (float) hist.length;
-            for (int i = 0; i < hist.length; i++) {
-                float alt = (hist[i] / (float) max) * h;
-                cv.drawRect(i * bw, h - alt, (i + 1) * bw, h, p);
-            }
-        }
-    }
-
-    private final class Reticulo extends View {
-        private float x = -1, y = -1;
-        private long t = 0;
-        private final Paint p = new Paint();
-
-        Reticulo(android.content.Context c) {
-            super(c);
-            p.setColor(0xFFFFD60A);
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(2f);
-        }
-
-        void mostrar(float px, float py) {
-            x = px; y = py; t = System.currentTimeMillis();
-            invalidate();
-            postDelayed(new Runnable() {
-                @Override
-                public void run() { invalidate(); }
-            }, 1200);
-        }
-
-        @Override
-        protected void onDraw(Canvas cv) {
-            super.onDraw(cv);
-            if (x < 0) return;
-            if (System.currentTimeMillis() - t > 1200) return;
-            float r = dp(34);
-            cv.drawCircle(x, y, r, p);
-            cv.drawLine(x - r - dp(6), y, x - r + dp(6), y, p);
-            cv.drawLine(x + r - dp(6), y, x + r + dp(6), y, p);
-            cv.drawLine(x, y - r - dp(6), x, y - r + dp(6), p);
-            cv.drawLine(x, y + r - dp(6), x, y + r + dp(6), p);
-        }
     }
 }
