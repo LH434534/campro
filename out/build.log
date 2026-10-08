@@ -1,39 +1,52 @@
-===== BUILD 2026-10-06T22:43:19Z =====
+===== BUILD 2026-10-08T22:35:27Z =====
 build-tools: /usr/local/lib/android/sdk/build-tools/37.0.0
 platform:    /usr/local/lib/android/sdk/platforms/android-37.2
 android.jar: ok
 --- 1. aapt2 compile ---
-res.zip: 2174
+res.zip: 2438
 --- 2. aapt2 link ---
-unsigned: 3052
+unsigned: 3128
 --- 3. javac ---
-fontes: 4
+fontes: 6
+src/com/thiairo/campro/MainActivity.java:493: error: method toNv21 in class Fusion cannot be applied to given types;
+                        byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h);
+                                          ^
+  required: byte[],byte[],byte[],int,int,int,int,int,int
+  found:    byte[],byte[],byte[],int,int
+  reason: actual and formal argument lists differ in length
+src/com/thiairo/campro/MainActivity.java:518: error: method toNv21 in class Fusion cannot be applied to given types;
+                byte[] nv = Fusion.toNv21(y, ref.u, ref.v, w, h);
+                                  ^
+  required: byte[],byte[],byte[],int,int,int,int,int,int
+  found:    byte[],byte[],byte[],int,int
+  reason: actual and formal argument lists differ in length
 Note: Some input files use or override a deprecated API.
 Note: Recompile with -Xlint:deprecation for details.
-classes: 36
+2 errors
+classes: 5
 --- 4. d8 ---
-entradas: 36
-total 44
--rw-r--r-- 1 runner runner 42840 Oct  6 22:43 classes.dex
+entradas: 5
+total 4
+-rw-r--r-- 1 runner runner 1856 Oct  8 22:35 classes.dex
 --- 5. dex no apk ---
 Archive:  build/stack.apk
   Length      Date    Time    Name
 ---------  ---------- -----   ----
      3172  1980-01-01 00:00   AndroidManifest.xml
       568  1980-01-01 00:00   res/drawable/ic_launcher_bg.xml
-     1336  1980-01-01 00:00   resources.arsc
-    42840  2026-10-06 22:43   classes.dex
+     1412  1980-01-01 00:00   resources.arsc
+     1856  2026-10-08 22:35   classes.dex
 ---------                     -------
-    47916                     4 files
+     7008                     4 files
 --- 6. zipalign ---
-alinhado: 24785
+alinhado: 4181
 --- 7. assinar ---
 	for: CN=CamPro, OU=Dev, O=Thiairo, L=SP, C=BR
 [Storing build/campro.keystore]
-assinado: 33244
+assinado: 12764
 --- 8. verificar ---
 V3.0 Signer: certificate DN: CN=CamPro, OU=Dev, O=Thiairo, L=SP, C=BR
-V3.0 Signer: certificate SHA-256 digest: f1b16cd7eda0f883a8280ea7975482484102423a50cca5d9aa4c6e3a181c7df7
-V3.0 Signer: certificate SHA-1 digest: 05ef4c990eed5e99680f0bbf8cf58be52f67ce49
-V3.0 Signer: certificate MD5 digest: 1d4a237ab1a262d846f2491f76585e6e
+V3.0 Signer: certificate SHA-256 digest: aab0c53b02265139f7e693d8f67c9e699b6d8da7025fc7b198f97194c424e390
+V3.0 Signer: certificate SHA-1 digest: a0df40c1aba335e44c96ef2a6af3c4dce6691d05
+V3.0 Signer: certificate MD5 digest: 72548a1080aeec71f78980fe1ac241bb
 ===== FIM =====
