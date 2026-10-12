@@ -342,6 +342,11 @@ public class Camera2Engine {
                 img.close();
                 if (f != null) {
                     synchronized (lock) {
+                        // Os resultados do captureBurst chegam ao ImageReader na
+                        // ordem dos pedidos. Sem esta associação, Frame.ev ficava
+                        // sempre no valor padrão 0 e o HDR tratava todos como EV 0.
+                        int indice = coletados.size();
+                        if (indice < evs.length) f.ev = evs[indice];
                         coletados.add(f);
                         Log.i(TAG, "quadro " + coletados.size() + "/" + total);
                         if (coletados.size() >= total) {
