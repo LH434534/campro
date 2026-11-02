@@ -1,4 +1,4 @@
-===== BUILD 2026-10-08T22:39:05Z =====
+===== BUILD 2026-11-02T10:07:46Z =====
 build-tools: /usr/local/lib/android/sdk/build-tools/37.0.0
 platform:    /usr/local/lib/android/sdk/platforms/android-37.2
 android.jar: ok
@@ -8,34 +8,45 @@ res.zip: 2438
 unsigned: 3128
 --- 3. javac ---
 fontes: 6
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
 Note: Some input files use or override a deprecated API.
 Note: Recompile with -Xlint:deprecation for details.
+3 warnings
 classes: 36
 erros javac: 0
 --- 4. d8 ---
 entradas: 36
 total 48
--rw-r--r-- 1 runner runner 48264 Oct  8 22:39 classes.dex
+-rw-r--r-- 1 runner runner 48668 Nov  2 10:07 classes.dex
 --- 5. dex no apk ---
-dex: 48264 bytes
+dex: 48668 bytes
 Archive:  build/stack.apk
   Length      Date    Time    Name
 ---------  ---------- -----   ----
      3172  1980-01-01 00:00   AndroidManifest.xml
       568  1980-01-01 00:00   res/drawable/ic_launcher_bg.xml
      1412  1980-01-01 00:00   resources.arsc
-    48264  2026-10-08 22:39   classes.dex
+    48668  2026-11-02 10:07   classes.dex
 ---------                     -------
-    53416                     4 files
+    53820                     4 files
 --- 6. zipalign ---
-alinhado: 28117
+alinhado: 28294
 --- 7. assinar ---
 	for: CN=CamPro, OU=Dev, O=Thiairo, L=SP, C=BR
 [Storing build/campro.keystore]
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::loadLibrary has been called by org.conscrypt.NativeLibraryUtil in an unnamed module (file:/usr/local/lib/android/sdk/build-tools/37.0.0/lib/apksigner.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
 assinado: 37340
 --- 8. verificar ---
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
 V3.0 Signer: certificate DN: CN=CamPro, OU=Dev, O=Thiairo, L=SP, C=BR
-V3.0 Signer: certificate SHA-256 digest: 966f247f1291972a01838db29ddcfda1fac25de3e42d973f1c80d90b46afe4ea
-V3.0 Signer: certificate SHA-1 digest: ed63617d966734406ed819b7f6d56b806528e177
-V3.0 Signer: certificate MD5 digest: 502b7961557dc8228b3fa2cb223ed805
+V3.0 Signer: certificate SHA-256 digest: 5d52182d12bc959bcda09cd6c667a9e4d4fe184e9c8b8de98068280846dc0fa1
+V3.0 Signer: certificate SHA-1 digest: 646d3049b28e4d6b14dabed000e85d6b8787d8cd
+V3.0 Signer: certificate MD5 digest: d431e72e2636aafececa8166bd0aa5e6
 ===== FIM =====
